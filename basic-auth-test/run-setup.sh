@@ -31,7 +31,7 @@ ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no \
     "chmod +x /tmp/setup-basic-auth-repo.sh && /tmp/setup-basic-auth-repo.sh ${EC2_IP} ${MODE}"
 
 scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no \
-    "${SSH_USER}@${EC2_IP}:/tmp/openshift-helm-basic-auth-setup.yaml" \
+    "${SSH_USER}@${EC2_IP}:/tmp/openshift-helm-repo-setup.yaml" \
     /tmp/
 
 echo ""
