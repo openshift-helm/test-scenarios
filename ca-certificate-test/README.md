@@ -24,15 +24,35 @@ On a server (Debian/Ubuntu):
 # Install nginx
 sudo apt-get install -y nginx
 
-# Generate self-signed certificate
-sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout /etc/ssl/private/helm-repo.key \
-  -out /etc/ssl/certs/helm-repo.crt \
-  -subj "/CN=your-domain.com"
+# Generate self-signed certificate (⚠️ IMPORTANT: Replace your-domain.com with actual domain!)
+cat > ~/openssl.cnf <<'EOF'
+[req]
+distinguished_name = dn
+x509_extensions = v3_req
+prompt = no
+[dn]
+CN = your-domain.com
+[v3_req]
+subjectAltName = @alt_names
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+[alt_names]
+DNS.1 = your-domain.com
+EOF
 
-# Configure nginx for HTTPS
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout ~/helm-repo.key \
+  -out ~/helm-repo.crt \
+  -config ~/openssl.cnf
+
+# Install certificate with proper permissions
+sudo install -m 600 ~/helm-repo.key /etc/ssl/private/helm-repo.key
+sudo install -m 644 ~/helm-repo.crt /etc/ssl/certs/helm-repo.crt
+
+# Configure nginx for HTTP and HTTPS
 sudo tee /etc/nginx/sites-available/helm-repo <<'EOF'
 server {
+    listen 80;
     listen 443 ssl;
     server_name your-domain.com;
     ssl_certificate /etc/ssl/certs/helm-repo.crt;
@@ -44,7 +64,8 @@ server {
 }
 EOF
 
-sudo ln -s /etc/nginx/sites-available/helm-repo /etc/nginx/sites-enabled/
+sudo ln -sf /etc/nginx/sites-available/helm-repo /etc/nginx/sites-enabled/helm-repo
+sudo rm -f /etc/nginx/sites-enabled/default
 sudo mkdir -p /var/www/helm
 sudo nginx -t && sudo systemctl reload nginx
 ```
@@ -54,29 +75,40 @@ sudo nginx -t && sudo systemctl reload nginx
 ```bash
 # Create chart
 helm create hello-helm
+rm -rf hello-helm/templates/tests
 
 # Package chart
 helm package hello-helm
 
-# Generate repository index
-helm repo index . --url https://your-domain.com/
+# Copy to web root
+sudo cp hello-helm-0.1.0.tgz /var/www/helm/
 
-# Publish to nginx
-sudo mv hello-helm-*.tgz index.yaml /var/www/helm/
+# Generate repository index (⚠️ IMPORTANT: Replace your-domain.com with actual domain!)
+cd /var/www/helm
+sudo helm repo index . --url https://your-domain.com/
+
+# Set proper permissions
+sudo chmod 644 /var/www/helm/*
+
+# Verify URLs in index.yaml are correct
+cat /var/www/helm/index.yaml | grep "urls:" -A 1
+# Should show: - https://your-domain.com/hello-helm-0.1.0.tgz
 ```
 
 ### 3. Configure on OpenShift
 
 ```bash
-# Extract CA certificate from server
-openssl s_client -connect your-domain.com:443 -showcerts </dev/null 2>/dev/null | \
-  openssl x509 -outform PEM > ca-cert.crt
+# Download CA certificate from server ⚠️ IMPORTANT:(replace admin and SSH key path)
+scp -i ~/your-key.pem admin@your-server-ip:/etc/ssl/certs/helm-repo.crt ~/ca-bundle.crt
 
 # Create namespace
-oc create namespace helm-lab
+oc new-project helm-lab
 
 # Create CA ConfigMap
-oc create configmap charts-ca -n helm-lab --from-file=ca-bundle.crt=ca-cert.crt
+oc create configmap charts-ca -n helm-lab --from-file=ca-bundle.crt=ca-bundle.crt
+
+# Verify ConfigMap
+oc get configmap charts-ca -n helm-lab -o jsonpath='{.data.ca-bundle\.crt}' | head -n 5
 
 # Create Helm repository with CA
 cat <<EOF | oc apply -f -
@@ -102,7 +134,7 @@ EOF
 
 **Via Helm CLI (for comparison):**
 ```bash
-helm repo add test https://your-domain.com/ --ca-file ca-cert.crt
+helm repo add test https://your-domain.com/ --ca-file ~/ca-bundle.crt
 helm install demo test/hello-helm -n helm-lab
 # Works correctly
 ```
