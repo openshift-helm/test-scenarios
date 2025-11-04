@@ -140,6 +140,46 @@ helm install demo test/hello-helm -n helm-lab
 ```
 
 ---
+## Localhost Reproduction
+
+Prerequisites: Helm repository with CA configured on cluster (steps 1-3 above)
+
+```bash
+cd /path/to/console
+git checkout release-4.16
+
+# Setup credentials
+oc whoami -t > examples/token
+oc process -f examples/console-oauth-client.yaml | oc apply -f -
+oc get oauthclient console-oauth-client -o jsonpath='{.secret}' > examples/console-client-secret
+
+# Build
+./build-backend.sh
+
+# Create read-only HOME (simulates pod)
+export FAKE_HOME=$(mktemp -d -t console-readonly-home)
+chmod 555 "$FAKE_HOME"
+
+# Run bridge - do NOT set HELM_CACHE_HOME
+HOME="$FAKE_HOME" \
+KUBECONFIG="$HOME/.kube/config" \
+./bin/bridge \
+  --base-address=http://localhost:9000 \
+  --k8s-mode=off-cluster \
+  --k8s-mode-off-cluster-endpoint="$(oc whoami --show-server)" \
+  --k8s-mode-off-cluster-skip-verify-tls=true \
+  --listen=http://127.0.0.1:9000 \
+  --public-dir=./frontend/public/dist \
+  --user-auth=openshift \
+  --user-auth-oidc-client-id=console-oauth-client \
+  --user-auth-oidc-client-secret-file=examples/console-client-secret \
+  --k8s-mode-off-cluster-service-account-bearer-token-file=examples/token
+
+# Test at http://localhost:9000 - should see cache error
+```
+
+---
+
 
 ## Root Cause
 
